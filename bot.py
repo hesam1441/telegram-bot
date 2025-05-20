@@ -1,102 +1,97 @@
-
-import os
-import smtplib
 import logging
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, ConversationHandler
+import smtplib
+import ssl
+import uuid
+import os
+from email.message import EmailMessage
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler, ContextTypes
 
-# دریافت متغیرها از محیط
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL")
+# متغیرها از محیط خوانده می‌شن
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+EMAIL_ADDRESS = os.environ["EMAIL_ADDRESS"]
+EMAIL_PASSWORD = os.environ["EMAIL_PASSWORD"]
+RECEIVER_EMAIL = os.environ["RECEIVER_EMAIL"]
 
-# تنظیم لاگ
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# مراحل گفتگو
-TEXT_CONTACT, ORDER = range(2)
+CHOOSING, TYPING = range(2)
+user_data_store = {}
 
-# صفحه کلید اصلی
-keyboard = [
-    ["📞 تماس تلفنی", "💬 تماس متنی"],
-    ["🛒 ثبت سفارش"]
-]
-markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    keyboard = [
+        [InlineKeyboardButton("تماس با ما", callback_data='contact')],
+        [InlineKeyboardButton("تماس تلفنی", callback_data='call')],
+        [InlineKeyboardButton("ثبت سفارش", callback_data='order')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("لطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=reply_markup)
+    return CHOOSING
 
-# شروع ربات
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "به ربات ما خوش آمدید! لطفاً یکی از گزینه‌ها را انتخاب کنید:",
-        reply_markup=markup
-    )
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    user_data_store[user_id] = {"choice": query.data}
 
-# تماس تلفنی
-async def phone_call(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("برای تماس تلفنی با ما با این شماره تماس بگیرید:
-📞 09125139013")
+    if query.data == 'call':
+        await query.edit_message_text(text="برای تماس تلفنی با ما با این شماره تماس بگیرید:\n📞 0912-123-4567")
+        return ConversationHandler.END
+    else:
+        prompt = "لطفاً پیام خود را بنویسید:" if query.data == 'contact' else "لطفاً جزئیات سفارش خود را وارد کنید:"
+        await query.edit_message_text(text=prompt)
+        return TYPING
 
-# شروع تماس متنی
-async def text_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("لطفاً پیام خود را وارد کنید تا برای ما ارسال شود:")
-    return TEXT_CONTACT
+async def receive_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = update.message.from_user.id
+    user_input = update.message.text
+    choice = user_data_store[user_id]["choice"]
+    unique_id = str(uuid.uuid4())[:8]
 
-# پردازش پیام تماس متنی
-async def handle_text_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    subject = "تماس متنی از ربات تلگرام"
-    send_email(subject, user_message)
-    await update.message.reply_text("پیام شما با موفقیت ارسال شد.")
-    return ConversationHandler.END
+    subject_map = {
+        "contact": "تماس با ما",
+        "order": "ثبت سفارش"
+    }
 
-# شروع ثبت سفارش
-async def order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("لطفاً جزئیات سفارش خود را وارد کنید:")
-    return ORDER
+    subject = f"{subject_map.get(choice, 'درخواست')} - {unique_id}"
+    body = f"پیام از: @{update.message.from_user.username or 'ندارد'}\n\nمتن پیام:\n{user_input}"
 
-# پردازش سفارش
-async def handle_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    subject = "سفارش جدید از ربات تلگرام"
-    send_email(subject, user_message)
-    await update.message.reply_text("سفارش شما با موفقیت ثبت شد.")
-    return ConversationHandler.END
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_ADDRESS
+    msg["To"] = RECEIVER_EMAIL
+    msg.set_content(body)
 
-# لغو عملیات
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("عملیات لغو شد.")
-    return ConversationHandler.END
-
-# ارسال ایمیل
-def send_email(subject, message):
-    full_message = f"Subject: {subject}\n\n{message}"
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
-            smtp.starttls()
-            smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            smtp.sendmail(EMAIL_ADDRESS, RECEIVER_EMAIL, full_message)
+        context_ssl = ssl.create_default_context()
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context_ssl) as server:
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.send_message(msg)
+        await update.message.reply_text("✅ پیام شما با موفقیت ارسال شد.")
     except Exception as e:
-        logging.error(f"خطا در ارسال ایمیل: {e}")
+        logging.error(f"Failed to send email: {e}")
+        await update.message.reply_text("❌ ارسال پیام با مشکل مواجه شد.")
 
-# راه‌اندازی ربات
-if __name__ == "__main__":
-    print("ربات داره شروع می‌کنه...")
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text("لغو شد.")
+    return ConversationHandler.END
+
+def main() -> None:
+    application = Application.builder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex("^💬 تماس متنی$"), text_contact),
-            MessageHandler(filters.Regex("^🛒 ثبت سفارش$"), order),
-        ],
+        entry_points=[CommandHandler("start", start)],
         states={
-            TEXT_CONTACT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_contact)],
-            ORDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order)],
+            CHOOSING: [CallbackQueryHandler(button)],
+            TYPING: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_message)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Regex("^📞 تماس تلفنی$"), phone_call))
-    app.add_handler(conv_handler)
+    application.add_handler(conv_handler)
+    application.run_polling()
 
-    app.run_polling()
+if __name__ == "__main__":
+    main()
