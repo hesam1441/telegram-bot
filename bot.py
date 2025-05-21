@@ -15,11 +15,11 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# --- Config
-BOT_TOKEN = "8120263843:AAFV8sLNCHEB2LVJJM5N8ASeYimqZq2mdvY"
-EMAIL_ADDRESS = "arcatav.co@gmail.com"
-EMAIL_PASSWORD = "xhzc blqp njjv tocg"
-RECEIVER_EMAIL = "arcatav@hotmail.com"
+# دریافت متغیرها از محیط
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL")
 
 # --- States
 CALL_NAME, CALL_PHONE, CALL_MESSAGE = range(3)
