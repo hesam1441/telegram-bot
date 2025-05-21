@@ -1,5 +1,6 @@
 print("ربات داره شروع می‌کنه...")
-import os
+
+import os  # ⬅️ این خط اضافه شده
 import logging
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
